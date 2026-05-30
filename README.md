@@ -189,15 +189,103 @@ Connect via serial (115200 baud) to see debug output:
 - **Image Loop**: Seamless in loop mode
 - **Button Response**: ~10ms polling rate
 
-## Sample Images
+## Image Tools & Generators
 
-The project includes several sample images in different styles:
+The project includes multiple powerful tools for creating and converting images:
 
+### **1. Simple Image Converter (`simple_image_converter.py`)**
+Command-line tool that converts any image format to 144px height BMP files:
+```bash
+# Convert single image
+python simple_image_converter.py photo.jpg
+
+# Convert multiple images
+python simple_image_converter.py *.jpg *.png
+
+# Convert entire folder
+python simple_image_converter.py images_folder/
+```
+
+### **2. Test Pattern Generator (`test_pattern_generator.py`)**
+Creates 19 diagnostic patterns (144×144px) for troubleshooting color and alignment issues:
+
+**Primary Color Tests (01-08):**
+- Pure Red, Green, Blue, White, Black
+- Yellow, Cyan, Magenta for color mixing tests
+
+**Orientation & Mapping (08):**
+- Corner identification with colored markers
+- Center crosshair for precise alignment
+
+**Channel Analysis (09-11):**
+- Individual RGB channel gradients
+- Helps identify BGR vs RGB channel swapping
+
+**Alignment Tests (12-14):**
+- Checkerboard pattern for basic alignment
+- Grid pattern for precise pixel mapping
+- Single pixel lines for fine alignment
+
+**Color Accuracy (15-17):**
+- Rainbow gradient for full spectrum test
+- Grayscale gradient for brightness linearity
+- Color swatches for standard verification
+
+**Precision Test (18):**
+- Crosshair target with concentric circles
+
+### **3. Single Column Generator (`single_column_generator.py`)**
+Creates 32 ultra-efficient patterns (1×144px) perfect for looped backgrounds:
+
+**Solid Colors (01-16):**
+- 16 solid colors including primaries, secondaries, and gray levels
+- Perfect for infinite solid color backgrounds when looped
+
+**Vertical Gradients (17-21):**
+- Red, Green, Blue, and White gradients
+- Smooth transitions from black to full color
+
+**Rainbow Effects (22-24):**
+- Vertical rainbow gradients
+- Reverse and pastel variations
+
+**Special Effects (25-27):**
+- Fire effect (hot bottom to cool top)
+- Ocean waves effect
+- Sunset gradient
+
+**Utility Patterns (28-32):**
+- Stripe patterns for testing
+- Single pixel alignment markers
+
+## Sample Images & Test Patterns
+
+### **Generated Test Patterns:**
+Run the generators to create comprehensive image sets:
+```bash
+# Create test patterns for diagnostics
+python test_pattern_generator.py
+
+# Create ultra-efficient single column patterns  
+python single_column_generator.py
+
+# Generate original sample patterns
+python generate_samples.py
+```
+
+**Original Sample Images:**
 1. **gradient_rainbow_144px.bmp** - Smooth color gradient
 2. **stripes_vertical_144px.bmp** - High contrast stripes
 3. **wave_pattern_144px.bmp** - Sine wave pattern
+4. **circles_144px.bmp** - Expanding circle patterns
+5. **fire_effect_144px.bmp** - Fire simulation
+6. **sparkles_144px.bmp** - Starfield effect
+7. **text_scroll_144px.bmp** - Scrolling text demo
 
-These demonstrate different visual effects and can serve as test images.
+### **Storage Efficiency:**
+- **Test Patterns**: 19 patterns (~1.2MB total) for comprehensive diagnostics
+- **Single Columns**: 32 patterns (~132KB total) for maximum storage efficiency
+- **Sample Images**: 7 patterns (~732KB total) for immediate testing
 
 ## Development
 
