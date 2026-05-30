@@ -16,41 +16,87 @@ PLAYBACK_SPEED_MS = 50  # Column display duration in milliseconds
 NUM_LEDS = 144
 DEFAULT_MODE = "loop"  # "loop" or "once"
 IMAGES_DIR = "/images"
+LONG_PRESS_DURATION = 1.0  # Long press threshold in seconds
 
 # Hardware setup
 pixels = neopixel.NeoPixel(board.DATA, NUM_LEDS, brightness=0.5, auto_write=False)
 
-# Onboard LED setup with CircuitPython 10 compatibility
-try:
-    # Try the old pin name first (CircuitPython < 10)
-    onboard_led = digitalio.DigitalInOut(board.LED)
-except AttributeError:
-    # CircuitPython 10+ uses different pin names, try alternatives
+# Onboard LED setup for CircuitPython (try all possible LED pins)
+onboard_leds = []
+led_pins_to_try = [
+    ('LED_R', 'LED_G', 'LED_B'),  # RGB LED pins
+    ('GP16', 'GP17', 'GP18'),     # Alternative RGB pins  
+    ('GP25',),                     # Single LED pin
+    ('LED',),                      # Standard LED pin
+    ('GP2',),                      # Alternative single LED
+]
+
+print("Detecting onboard LEDs...")
+for pins in led_pins_to_try:
     try:
-        onboard_led = digitalio.DigitalInOut(board.GP25)  # Common LED pin
+        if len(pins) == 3:  # RGB LED
+            led_r = digitalio.DigitalInOut(getattr(board, pins[0]))
+            led_g = digitalio.DigitalInOut(getattr(board, pins[1]))
+            led_b = digitalio.DigitalInOut(getattr(board, pins[2]))
+            led_r.direction = digitalio.Direction.OUTPUT
+            led_g.direction = digitalio.Direction.OUTPUT
+            led_b.direction = digitalio.Direction.OUTPUT
+            # Turn them off immediately
+            led_r.value = False
+            led_g.value = False
+            led_b.value = False
+            onboard_leds.append(('rgb', led_r, led_g, led_b))
+            print(f"Found RGB LED on pins {pins}")
+        else:  # Single LED
+            led = digitalio.DigitalInOut(getattr(board, pins[0]))
+            led.direction = digitalio.Direction.OUTPUT
+            led.value = False  # Turn it off immediately
+            onboard_leds.append(('single', led))
+            print(f"Found single LED on pin {pins[0]}")
+    except AttributeError:
+        continue
+
+if onboard_leds:
+    print(f"Total LEDs found: {len(onboard_leds)}")
+else:
+    print("Warning: No onboard LEDs detected")
+
+# Button setup with CircuitPython 10 compatibility
+# Button A
+try:
+    button_a = digitalio.DigitalInOut(board.SW_A)
+except AttributeError:
+    try:
+        button_a = digitalio.DigitalInOut(board.BUTTON_A)
     except AttributeError:
         try:
-            onboard_led = digitalio.DigitalInOut(board.GP2)   # Alternative LED pin
+            button_a = digitalio.DigitalInOut(board.GP12)  # Common button pin
         except AttributeError:
-            # If no onboard LED available, create a dummy object
-            print("Warning: No onboard LED found, using dummy LED object")
-            onboard_led = None
+            print("Warning: Button A not found, functionality will be limited")
+            button_a = None
 
-if onboard_led:
-    onboard_led.direction = digitalio.Direction.OUTPUT
+if button_a:
+    button_a.direction = digitalio.Direction.INPUT
+    button_a.pull = digitalio.Pull.UP
 
-# Button setup
-button_a = digitalio.DigitalInOut(board.SW_A)
-button_a.direction = digitalio.Direction.INPUT
-button_a.pull = digitalio.Pull.UP
+# Button B  
+try:
+    button_b = digitalio.DigitalInOut(board.SW_B)
+except AttributeError:
+    try:
+        button_b = digitalio.DigitalInOut(board.BUTTON_B)
+    except AttributeError:
+        try:
+            button_b = digitalio.DigitalInOut(board.GP13)  # Common button pin
+        except AttributeError:
+            print("Warning: Button B not found, functionality will be limited")
+            button_b = None
 
-button_b = digitalio.DigitalInOut(board.SW_B)
-button_b.direction = digitalio.Direction.INPUT
-button_b.pull = digitalio.Pull.UP
+if button_b:
+    button_b.direction = digitalio.Direction.INPUT
+    button_b.pull = digitalio.Pull.UP
 
-button_boot = digitalio.DigitalInOut(board.USER)
-button_boot.direction = digitalio.Direction.INPUT
-button_boot.pull = digitalio.Pull.UP
+# Boot button removed - using long press on button B instead
 
 class ImageManager:
     def __init__(self):
@@ -176,6 +222,9 @@ class LEDController:
     
     def display_column(self, column_data):
         """Display column data on LED strip"""
+        # Ensure onboard LEDs are always off during playback
+        self.set_onboard_led_off()
+        
         # Map image pixels to LEDs (distant end = top of image)
         # LED[0] = bottom of image, LED[143] = top of image
         for i, (r, g, b) in enumerate(column_data):
@@ -186,43 +235,90 @@ class LEDController:
     
     def status_flash(self, color, duration=0.1):
         """Flash LED strip with status color"""
-        if onboard_led:  # Only set if onboard LED exists
-            onboard_led.value = False  # Keep onboard LED off
+        self.set_onboard_led_off()  # Keep onboard LED off
         pixels.fill(color)
         pixels.show()
         time.sleep(duration)
         pixels.fill((0, 0, 0))
         pixels.show()
+    
+    def image_number_indicator(self, image_number, total_images):
+        """Show which image is selected by blinking N pixels N times"""
+        self.set_onboard_led_off()  # Keep onboard LED off
+        
+        # Limit to max 10 pixels for practical display
+        num_pixels = min(image_number, 10)
+        num_blinks = min(image_number, 5)  # Max 5 blinks to keep it reasonable
+        
+        # Color for image indicator (bright blue)
+        color = (0, 100, 255)
+        
+        for blink in range(num_blinks):
+            # Light up N pixels from the bottom (LED end)
+            pixels.fill((0, 0, 0))  # Clear all
+            for i in range(num_pixels):
+                pixels[i] = color
+            pixels.show()
+            time.sleep(0.2)
+            
+            # Turn off
+            pixels.fill((0, 0, 0))
+            pixels.show()
+            time.sleep(0.15)
+        
+        time.sleep(0.3)  # Pause before continuing
+    
+    def set_onboard_led_off(self):
+        """Turn off all onboard LEDs"""
+        for led_info in onboard_leds:
+            if led_info[0] == 'rgb':  # RGB LED
+                led_info[1].value = False  # R
+                led_info[2].value = False  # G
+                led_info[3].value = False  # B
+            elif led_info[0] == 'single':  # Single LED
+                led_info[1].value = False
 
 class ButtonHandler:
     def __init__(self):
         self.last_a = True
         self.last_b = True
-        self.last_boot = True
+        self.button_b_press_time = None
     
     def check_buttons(self):
         """Check for button presses and return actions"""
-        current_a = button_a.value
-        current_b = button_b.value
-        current_boot = button_boot.value
+        # Safely read button values, defaulting to True (not pressed) if button doesn't exist
+        current_a = button_a.value if button_a else True
+        current_b = button_b.value if button_b else True
         
         actions = []
+        current_time = time.monotonic()
         
-        # Button A: Next image (on release)
-        if self.last_a and not current_a:
+        # Button A: Next image (on release) - only if button exists
+        if button_a and self.last_a and not current_a:
             actions.append('next_image')
         
-        # Button B: Start/restart image (on release)
-        if self.last_b and not current_b:
-            actions.append('start_image')
-        
-        # Boot button: Toggle mode (on release)
-        if self.last_boot and not current_boot:
-            actions.append('toggle_mode')
+        # Button B: Start/stop toggle + long press for mode toggle
+        if button_b:
+            # Button B pressed down (start timing)
+            if self.last_b and not current_b:
+                self.button_b_press_time = current_time
+            
+            # Button B released - check press duration
+            elif not self.last_b and current_b:
+                if self.button_b_press_time:
+                    press_duration = current_time - self.button_b_press_time
+                    
+                    if press_duration >= LONG_PRESS_DURATION:
+                        # Long press: Toggle playback mode
+                        actions.append('toggle_mode')
+                    else:
+                        # Short press: Toggle start/stop
+                        actions.append('toggle_playback')
+                    
+                    self.button_b_press_time = None
         
         self.last_a = current_a
         self.last_b = current_b
-        self.last_boot = current_boot
         
         return actions
 
@@ -244,8 +340,7 @@ def main():
     using_rainbow = len(image_manager.images) == 0
     
     # Turn off onboard LED
-    if onboard_led:
-        onboard_led.value = False
+    led_controller.set_onboard_led_off()
     
     # Initial status
     if using_rainbow:
@@ -267,17 +362,25 @@ def main():
                     is_playing = False
                     current_column = 0
                     led_controller.clear()
-                    led_controller.status_flash((0, 0, 255), 0.1)  # Blue for image switch
-                    print(f"Switched to: {next_img}")
+                    # Show image number indicator: N pixels blink N times
+                    image_num = image_manager.current_image_index + 1  # 1-based for user
+                    led_controller.image_number_indicator(image_num, len(image_manager.images))
+                    print(f"Switched to image {image_num}: {next_img}")
             
-            elif action == 'start_image':
-                is_playing = True
-                current_column = 0
-                last_column_time = time.monotonic() * 1000
-                if using_rainbow:
-                    print("Starting rainbow pattern")
+            elif action == 'toggle_playback':
+                if is_playing:
+                    # Stop playback
+                    is_playing = False
+                    led_controller.clear()
+                    print("Playback stopped")
                 else:
-                    print(f"Starting: {image_manager.get_current_image()}")
+                    # Start playback (resume from current position or restart)
+                    is_playing = True
+                    last_column_time = time.monotonic() * 1000
+                    if using_rainbow:
+                        print("Starting rainbow pattern")
+                    else:
+                        print(f"Starting: {image_manager.get_current_image()}")
             
             elif action == 'toggle_mode':
                 playback_mode = "once" if playback_mode == "loop" else "loop"
@@ -337,8 +440,7 @@ def main():
                         led_controller.clear()
         
         # Keep onboard LED off during operation
-        if onboard_led:
-            onboard_led.value = False
+        led_controller.set_onboard_led_off()
         time.sleep(0.01)  # Small delay to prevent excessive CPU usage
 
 if __name__ == "__main__":
