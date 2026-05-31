@@ -459,7 +459,7 @@ def main():
                         led_controller.clear()
                         print("Image completed. Press B to restart.")
         
-        time.sleep(0.01)  # Small delay to prevent excessive CPU usage
+        # Removed delay for maximum playback speed performance
 
 if __name__ == "__main__":
     main()
