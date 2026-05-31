@@ -423,6 +423,7 @@ def main():
     current_format_info = None
     image_buffer = None  # Full image buffer for maximum speed
     last_column_time = 0
+    button_check_counter = 0  # For reduced frequency button checking during playback
     using_rainbow = len(image_manager.images) == 0
     
     # Initial status
@@ -435,85 +436,94 @@ def main():
         print(f"Loaded {len(image_manager.images)} images, mode: {playback_mode}")
     
     while True:
-        # MAXIMUM SPEED OPTIMIZATION: Only check buttons when NOT playing
+        # SMART BUTTON CHECKING: Full check when stopped, reduced frequency when playing
+        actions = []
+        
         if not is_playing:
-            # Handle button presses
+            # When stopped: Check buttons every loop for immediate response
             actions = button_handler.check_buttons()
+        else:
+            # When playing: Check buttons every 10th loop for 90% speed boost
+            button_check_counter += 1
+            if button_check_counter >= 10:
+                actions = button_handler.check_buttons()
+                button_check_counter = 0
+        
+        # Handle button actions
+        for action in actions:
+            if action == 'next_image' and not using_rainbow:
+                next_img = image_manager.next_image()
+                if next_img:
+                    is_playing = False
+                    current_column = 0
+                    image_width = 0
+                    current_format_info = None
+                    image_buffer = None  # Reset buffer for new image
+                    led_controller.clear()
+                    # Show image number indicator: N pixels blink N times
+                    image_num = image_manager.current_image_index + 1  # 1-based for user
+                    led_controller.image_number_indicator(image_num, len(image_manager.images))
+                    print(f"Switched to image {image_num}: {next_img}")
             
-            for action in actions:
-                if action == 'next_image' and not using_rainbow:
-                    next_img = image_manager.next_image()
-                    if next_img:
-                        is_playing = False
-                        current_column = 0
-                        image_width = 0
-                        current_format_info = None
-                        image_buffer = None  # Reset buffer for new image
-                        led_controller.clear()
-                        # Show image number indicator: N pixels blink N times
-                        image_num = image_manager.current_image_index + 1  # 1-based for user
-                        led_controller.image_number_indicator(image_num, len(image_manager.images))
-                        print(f"Switched to image {image_num}: {next_img}")
-                
-                elif action == 'toggle_playback':
-                    if is_playing:
-                        # Stop playback
-                        is_playing = False
-                        led_controller.clear()
-                        print("Playback stopped")
-                    else:
-                        # Start playback - intelligent memory management
-                        if not using_rainbow:
-                            current_image = image_manager.get_current_image()
-                            if current_image:
-                                # Load format info
-                                current_format_info = BMPReader.read_bmp_header(f"{IMAGES_DIR}/{current_image}")
-                                if current_format_info and current_format_info['height'] == NUM_LEDS:
-                                    image_width = current_format_info['width']
+            elif action == 'toggle_playback':
+                if is_playing:
+                    # Stop playback
+                    is_playing = False
+                    led_controller.clear()
+                    print("Playback stopped")
+                else:
+                    # Start playback - intelligent memory management
+                    if not using_rainbow:
+                        current_image = image_manager.get_current_image()
+                        if current_image:
+                            # Load format info
+                            current_format_info = BMPReader.read_bmp_header(f"{IMAGES_DIR}/{current_image}")
+                            if current_format_info and current_format_info['height'] == NUM_LEDS:
+                                image_width = current_format_info['width']
+                                
+                                # Smart memory management: estimate memory requirements
+                                estimated_memory = image_width * NUM_LEDS * 3  # RGB bytes
+                                memory_limit = 80000  # Conservative limit ~80KB
+                                
+                                if estimated_memory <= memory_limit:
+                                    # Small image - try full buffering for maximum speed
+                                    print(f"Small image ({estimated_memory/1000:.1f}KB) - attempting full buffering...")
+                                    image_buffer = BMPReader.load_full_image(f"{IMAGES_DIR}/{current_image}", current_format_info)
                                     
-                                    # Smart memory management: estimate memory requirements
-                                    estimated_memory = image_width * NUM_LEDS * 3  # RGB bytes
-                                    memory_limit = 80000  # Conservative limit ~80KB
-                                    
-                                    if estimated_memory <= memory_limit:
-                                        # Small image - try full buffering for maximum speed
-                                        print(f"Small image ({estimated_memory/1000:.1f}KB) - attempting full buffering...")
-                                        image_buffer = BMPReader.load_full_image(f"{IMAGES_DIR}/{current_image}", current_format_info)
-                                        
-                                        if image_buffer:
-                                            print(f"✓ Buffered: {len(image_buffer)} columns ready for maximum speed")
-                                            is_playing = True
-                                            current_column = 0
-                                            last_column_time = time.monotonic() * 1000
-                                        else:
-                                            print("! Buffering failed - falling back to streaming mode")
-                                            # Fallback to streaming mode
-                                            image_buffer = None
-                                            is_playing = True
-                                            current_column = 0
-                                            last_column_time = time.monotonic() * 1000
+                                    if image_buffer:
+                                        print(f"✓ Buffered: {len(image_buffer)} columns ready for maximum speed")
+                                        is_playing = True
+                                        current_column = 0
+                                        last_column_time = time.monotonic() * 1000
                                     else:
-                                        # Large image - use streaming mode to avoid memory issues
-                                        print(f"Large image ({estimated_memory/1000:.1f}KB) - using streaming mode")
+                                        print("! Buffering failed - falling back to streaming mode")
+                                        # Fallback to streaming mode
                                         image_buffer = None
                                         is_playing = True
                                         current_column = 0
                                         last_column_time = time.monotonic() * 1000
                                 else:
-                                    print("Invalid image format")
-                        else:
-                            # Rainbow mode
-                            is_playing = True
-                            current_column = 0
-                            image_width = 100
-                            last_column_time = time.monotonic() * 1000
-                            print("Starting rainbow pattern")
-                
-                elif action == 'toggle_mode':
-                    playback_mode = "once" if playback_mode == "loop" else "loop"
-                    color = (0, 255, 0) if playback_mode == "loop" else (255, 0, 0)
-                    led_controller.status_flash(color, 0.2)
-                    print(f"Mode: {playback_mode}")
+                                    # Large image - use streaming mode to avoid memory issues
+                                    print(f"Large image ({estimated_memory/1000:.1f}KB) - using streaming mode")
+                                    image_buffer = None
+                                    is_playing = True
+                                    current_column = 0
+                                    last_column_time = time.monotonic() * 1000
+                            else:
+                                print("Invalid image format")
+                    else:
+                        # Rainbow mode
+                        is_playing = True
+                        current_column = 0
+                        image_width = 100
+                        last_column_time = time.monotonic() * 1000
+                        print("Starting rainbow pattern")
+            
+            elif action == 'toggle_mode':
+                playback_mode = "once" if playback_mode == "loop" else "loop"
+                color = (0, 255, 0) if playback_mode == "loop" else (255, 0, 0)
+                led_controller.status_flash(color, 0.2)
+                print(f"Mode: {playback_mode}")
         
         # HYBRID SPEED PLAYBACK: Maximum speed with memory management
         if is_playing:
