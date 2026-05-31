@@ -10,6 +10,7 @@ import digitalio
 import time
 import os
 import struct
+import gc
 
 # Configuration
 PLAYBACK_SPEED_MS = 20  # Column display duration in milliseconds (faster playback)
@@ -452,13 +453,17 @@ def main():
         # Handle button actions
         for action in actions:
             if action == 'next_image' and not using_rainbow:
+                # Clean up memory before switching images
+                image_buffer = None  # Free old image buffer first
+                gc.collect()  # Force garbage collection
+                print(f"Memory cleanup: {gc.mem_free()} bytes available")
+                
                 next_img = image_manager.next_image()
                 if next_img:
                     is_playing = False
                     current_column = 0
                     image_width = 0
                     current_format_info = None
-                    image_buffer = None  # Reset buffer for new image
                     led_controller.clear()
                     # Show image number indicator: N pixels blink N times
                     image_num = image_manager.current_image_index + 1  # 1-based for user
@@ -488,6 +493,9 @@ def main():
                                 if estimated_memory <= memory_limit:
                                     # Small image - try full buffering for maximum speed
                                     print(f"Small image ({estimated_memory/1000:.1f}KB) - attempting full buffering...")
+                                    # Clean up memory before major allocation
+                                    gc.collect()
+                                    print(f"Pre-buffering cleanup: {gc.mem_free()} bytes available")
                                     image_buffer = BMPReader.load_full_image(f"{IMAGES_DIR}/{current_image}", current_format_info)
                                     
                                     if image_buffer:
