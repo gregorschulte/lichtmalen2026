@@ -14,7 +14,7 @@ import os
 import glob
 from PIL import Image
 
-def convert_image(input_path, output_dir="converted_images"):
+def convert_image(input_path, output_dir="converted_images", use_indexed_color=True):
     """Convert a single image to 144px height BMP format"""
     try:
         # Ensure output directory exists
@@ -36,13 +36,34 @@ def convert_image(input_path, output_dir="converted_images"):
             
             # Create output filename
             base_name = os.path.splitext(os.path.basename(input_path))[0]
-            output_filename = f"{base_name}_144px.bmp"
-            output_path = os.path.join(output_dir, output_filename)
             
-            # Save as 24-bit BMP
-            resized_img.save(output_path, format='BMP')
+            if use_indexed_color:
+                # Convert to 8-bit indexed color for memory efficiency
+                # Quantize to 256 colors with high quality algorithm
+                indexed_img = resized_img.quantize(colors=256, method=Image.Quantize.MEDIANCUT)
+                
+                output_filename = f"{base_name}_144px_8bit.bmp"
+                output_path = os.path.join(output_dir, output_filename)
+                
+                # Save as 8-bit indexed BMP
+                indexed_img.save(output_path, format='BMP')
+                
+                # Calculate size reduction
+                original_size = target_width * target_height * 3  # 24-bit
+                indexed_size = target_width * target_height + 256 * 4  # 8-bit + palette
+                reduction = (1 - indexed_size / original_size) * 100
+                
+                print(f"✓ Converted: {os.path.basename(input_path)} -> {output_filename} ({target_width}x{target_height})")
+                print(f"  Memory efficient: {reduction:.1f}% smaller than 24-bit")
+                
+            else:
+                # Save as 24-bit BMP (original method)
+                output_filename = f"{base_name}_144px.bmp"
+                output_path = os.path.join(output_dir, output_filename)
+                resized_img.save(output_path, format='BMP')
+                
+                print(f"✓ Converted: {os.path.basename(input_path)} -> {output_filename} ({target_width}x{target_height})")
             
-            print(f"✓ Converted: {os.path.basename(input_path)} -> {output_filename} ({target_width}x{target_height})")
             return True
             
     except Exception as e:

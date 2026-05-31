@@ -12,14 +12,14 @@ import os
 import struct
 
 # Configuration
-PLAYBACK_SPEED_MS = 50  # Column display duration in milliseconds
+PLAYBACK_SPEED_MS = 20  # Column display duration in milliseconds (faster playback)
 NUM_LEDS = 144
 DEFAULT_MODE = "loop"  # "loop" or "once"
 IMAGES_DIR = "/images"
 LONG_PRESS_DURATION = 1.0  # Long press threshold in seconds
 
 # Hardware setup
-pixels = neopixel.NeoPixel(board.DATA, NUM_LEDS, brightness=0.5, auto_write=False)
+pixels = neopixel.NeoPixel(board.DATA, NUM_LEDS, brightness=0.3, auto_write=False)
 
 # Onboard LED setup for CircuitPython (try all possible LED pins)
 onboard_leds = []
@@ -130,50 +130,114 @@ class ImageManager:
 class BMPReader:
     @staticmethod
     def read_bmp_header(filename):
-        """Read BMP header to get image dimensions"""
+        """Read BMP header to get image dimensions and format info"""
         try:
             with open(filename, 'rb') as f:
-                # Read BMP header
-                header = f.read(54)  # Standard BMP header size
+                # Read BMP file header (14 bytes) + DIB header (40+ bytes)
+                header = f.read(54)
                 
                 # Extract width and height (little-endian)
                 width = struct.unpack('<I', header[18:22])[0]
                 height = struct.unpack('<I', header[22:26])[0]
+                bits_per_pixel = struct.unpack('<H', header[28:30])[0]
                 
-                return width, height
-        except:
-            return None, None
+                # Determine format and palette info
+                format_info = {
+                    'width': width,
+                    'height': height,
+                    'bits_per_pixel': bits_per_pixel,
+                    'is_indexed': bits_per_pixel == 8,
+                    'palette': None
+                }
+                
+                # If 8-bit indexed, read the palette
+                if bits_per_pixel == 8:
+                    # Palette starts after header (at offset 54)
+                    f.seek(54)
+                    palette_data = f.read(256 * 4)  # 256 colors × 4 bytes (BGRA)
+                    palette = []
+                    for i in range(256):
+                        # Extract BGR values (ignore alpha)
+                        bgra = palette_data[i*4:(i+1)*4]
+                        if len(bgra) >= 3:
+                            b, g, r = bgra[0], bgra[1], bgra[2]
+                            palette.append((r, g, b))
+                        else:
+                            palette.append((0, 0, 0))
+                    format_info['palette'] = palette
+                
+                return format_info
+        except Exception as e:
+            print(f"Error reading BMP header: {e}")
+            return None
     
     @staticmethod
-    def read_bmp_column(filename, column, width, height):
-        """Read a specific column from BMP file"""
+    def read_bmp_column(filename, column, format_info):
+        """Read a specific column from BMP file (supports 24-bit and 8-bit indexed)"""
+        if not format_info:
+            return [(0, 0, 0)] * NUM_LEDS
+            
+        width = format_info['width']
+        height = format_info['height']
+        is_indexed = format_info['is_indexed']
+        palette = format_info.get('palette')
+        
         try:
             with open(filename, 'rb') as f:
-                # Skip BMP header
-                f.seek(54)
-                
-                # BMP files are stored bottom-to-top, we need top-to-bottom
-                # Each pixel is 3 bytes (BGR format)
-                row_size = ((width * 3 + 3) // 4) * 4  # Row size padded to 4 bytes
-                
                 column_data = []
-                for row in range(height):
-                    # Calculate position for this pixel (bottom-up in BMP)
-                    pixel_row = height - 1 - row  # Flip to top-down
-                    pos = 54 + pixel_row * row_size + column * 3
-                    f.seek(pos)
+                
+                if is_indexed and palette:
+                    # 8-bit indexed BMP
+                    # Data starts after header + palette (54 + 256*4 = 1078 bytes)
+                    data_offset = 54 + 256 * 4
                     
-                    # Read BGR values
-                    bgr = f.read(3)
-                    if len(bgr) == 3:
-                        # Convert BGR to RGB and add to column
-                        r, g, b = bgr[2], bgr[1], bgr[0]
-                        column_data.append((r, g, b))
-                    else:
-                        column_data.append((0, 0, 0))
+                    # Row size padded to 4 bytes
+                    row_size = ((width + 3) // 4) * 4
+                    
+                    for row in range(height):
+                        # Calculate position for this pixel (bottom-up in BMP)
+                        pixel_row = height - 1 - row  # Flip to top-down
+                        pos = data_offset + pixel_row * row_size + column
+                        f.seek(pos)
+                        
+                        # Read palette index
+                        index_data = f.read(1)
+                        if len(index_data) == 1:
+                            palette_index = index_data[0]
+                            if palette_index < len(palette):
+                                r, g, b = palette[palette_index]
+                                column_data.append((r, g, b))
+                            else:
+                                column_data.append((0, 0, 0))
+                        else:
+                            column_data.append((0, 0, 0))
+                
+                else:
+                    # 24-bit BMP (original format)
+                    f.seek(54)  # Skip header
+                    
+                    # Row size padded to 4 bytes (3 bytes per pixel)
+                    row_size = ((width * 3 + 3) // 4) * 4
+                    
+                    for row in range(height):
+                        # Calculate position for this pixel (bottom-up in BMP)
+                        pixel_row = height - 1 - row  # Flip to top-down
+                        pos = 54 + pixel_row * row_size + column * 3
+                        f.seek(pos)
+                        
+                        # Read BGR values
+                        bgr = f.read(3)
+                        if len(bgr) == 3:
+                            # Convert BGR to RGB
+                            r, g, b = bgr[2], bgr[1], bgr[0]
+                            column_data.append((r, g, b))
+                        else:
+                            column_data.append((0, 0, 0))
                 
                 return column_data
-        except:
+                
+        except Exception as e:
+            print(f"Error reading BMP column: {e}")
             return [(0, 0, 0)] * height
 
 class RainbowGenerator:
@@ -336,6 +400,7 @@ def main():
     is_playing = False
     current_column = 0
     image_width = 0
+    current_format_info = None
     last_column_time = 0
     using_rainbow = len(image_manager.images) == 0
     
@@ -361,6 +426,8 @@ def main():
                 if next_img:
                     is_playing = False
                     current_column = 0
+                    image_width = 0
+                    current_format_info = None  # Reset format info for new image
                     led_controller.clear()
                     # Show image number indicator: N pixels blink N times
                     image_num = image_manager.current_image_index + 1  # 1-based for user
@@ -398,14 +465,22 @@ def main():
                     image_width = width
                 else:
                     # Load current image info if needed
-                    if image_width == 0:
+                    if current_format_info is None:
                         current_image = image_manager.get_current_image()
                         if current_image:
-                            width, height = BMPReader.read_bmp_header(f"{IMAGES_DIR}/{current_image}")
-                            if width and height == NUM_LEDS:
-                                image_width = width
+                            current_format_info = BMPReader.read_bmp_header(f"{IMAGES_DIR}/{current_image}")
+                            if current_format_info and current_format_info['height'] == NUM_LEDS:
+                                image_width = current_format_info['width']
+                                # Print format information
+                                if current_format_info['is_indexed']:
+                                    print(f"8-bit indexed BMP: {image_width}x{current_format_info['height']} (Memory efficient!)")
+                                else:
+                                    print(f"24-bit BMP: {image_width}x{current_format_info['height']}")
                             else:
-                                print(f"Invalid image dimensions: {width}x{height}")
+                                if current_format_info:
+                                    print(f"Invalid image dimensions: {current_format_info['width']}x{current_format_info['height']}")
+                                else:
+                                    print("Error reading BMP file")
                                 is_playing = False
                                 continue
                     
@@ -415,8 +490,7 @@ def main():
                         column_data = BMPReader.read_bmp_column(
                             f"{IMAGES_DIR}/{current_image}", 
                             current_column, 
-                            image_width, 
-                            NUM_LEDS
+                            current_format_info
                         )
                     else:
                         column_data = [(0, 0, 0)] * NUM_LEDS
