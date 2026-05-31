@@ -462,24 +462,43 @@ def main():
                         led_controller.clear()
                         print("Playback stopped")
                     else:
-                        # Start playback - load image buffer for maximum speed  
+                        # Start playback - intelligent memory management
                         if not using_rainbow:
                             current_image = image_manager.get_current_image()
                             if current_image:
-                                # Load format info and full image buffer
+                                # Load format info
                                 current_format_info = BMPReader.read_bmp_header(f"{IMAGES_DIR}/{current_image}")
                                 if current_format_info and current_format_info['height'] == NUM_LEDS:
                                     image_width = current_format_info['width']
-                                    # Load full image into memory
-                                    image_buffer = BMPReader.load_full_image(f"{IMAGES_DIR}/{current_image}", current_format_info)
                                     
-                                    if image_buffer:
-                                        print(f"Buffered image: {len(image_buffer)} columns ready for maximum speed")
+                                    # Smart memory management: estimate memory requirements
+                                    estimated_memory = image_width * NUM_LEDS * 3  # RGB bytes
+                                    memory_limit = 80000  # Conservative limit ~80KB
+                                    
+                                    if estimated_memory <= memory_limit:
+                                        # Small image - try full buffering for maximum speed
+                                        print(f"Small image ({estimated_memory/1000:.1f}KB) - attempting full buffering...")
+                                        image_buffer = BMPReader.load_full_image(f"{IMAGES_DIR}/{current_image}", current_format_info)
+                                        
+                                        if image_buffer:
+                                            print(f"✓ Buffered: {len(image_buffer)} columns ready for maximum speed")
+                                            is_playing = True
+                                            current_column = 0
+                                            last_column_time = time.monotonic() * 1000
+                                        else:
+                                            print("! Buffering failed - falling back to streaming mode")
+                                            # Fallback to streaming mode
+                                            image_buffer = None
+                                            is_playing = True
+                                            current_column = 0
+                                            last_column_time = time.monotonic() * 1000
+                                    else:
+                                        # Large image - use streaming mode to avoid memory issues
+                                        print(f"Large image ({estimated_memory/1000:.1f}KB) - using streaming mode")
+                                        image_buffer = None
                                         is_playing = True
                                         current_column = 0
                                         last_column_time = time.monotonic() * 1000
-                                    else:
-                                        print("Error loading image buffer")
                                 else:
                                     print("Invalid image format")
                         else:
@@ -496,7 +515,7 @@ def main():
                     led_controller.status_flash(color, 0.2)
                     print(f"Mode: {playback_mode}")
         
-        # MAXIMUM SPEED PLAYBACK: Zero overhead during playback
+        # HYBRID SPEED PLAYBACK: Maximum speed with memory management
         if is_playing:
             current_time = time.monotonic() * 1000
             if current_time - last_column_time >= PLAYBACK_SPEED_MS:
@@ -505,10 +524,21 @@ def main():
                     # Rainbow pattern (no buffering needed)
                     column_data, _ = RainbowGenerator.generate_column(current_column)
                 elif image_buffer and current_column < len(image_buffer):
-                    # Use buffered image data - MAXIMUM SPEED!
+                    # Buffered mode - MAXIMUM SPEED!
                     column_data = image_buffer[current_column]
+                elif current_format_info and current_column < image_width:
+                    # Streaming mode - optimized but still fast
+                    current_image = image_manager.get_current_image()
+                    if current_image:
+                        column_data = BMPReader.read_bmp_column(
+                            f"{IMAGES_DIR}/{current_image}", 
+                            current_column, 
+                            current_format_info
+                        )
+                    else:
+                        column_data = [(0, 0, 0)] * NUM_LEDS
                 else:
-                    # Fallback (should not happen with proper buffering)
+                    # Fallback - black
                     column_data = [(0, 0, 0)] * NUM_LEDS
                 
                 # Display column
