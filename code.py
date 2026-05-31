@@ -21,45 +21,8 @@ LONG_PRESS_DURATION = 1.0  # Long press threshold in seconds
 # Hardware setup
 pixels = neopixel.NeoPixel(board.DATA, NUM_LEDS, brightness=0.3, auto_write=False)
 
-# Onboard LED setup for CircuitPython (try all possible LED pins)
-onboard_leds = []
-led_pins_to_try = [
-    ('LED_R', 'LED_G', 'LED_B'),  # RGB LED pins
-    ('GP16', 'GP17', 'GP18'),     # Alternative RGB pins  
-    ('GP25',),                     # Single LED pin
-    ('LED',),                      # Standard LED pin
-    ('GP2',),                      # Alternative single LED
-]
-
-print("Detecting onboard LEDs...")
-for pins in led_pins_to_try:
-    try:
-        if len(pins) == 3:  # RGB LED
-            led_r = digitalio.DigitalInOut(getattr(board, pins[0]))
-            led_g = digitalio.DigitalInOut(getattr(board, pins[1]))
-            led_b = digitalio.DigitalInOut(getattr(board, pins[2]))
-            led_r.direction = digitalio.Direction.OUTPUT
-            led_g.direction = digitalio.Direction.OUTPUT
-            led_b.direction = digitalio.Direction.OUTPUT
-            # Turn them off immediately
-            led_r.value = False
-            led_g.value = False
-            led_b.value = False
-            onboard_leds.append(('rgb', led_r, led_g, led_b))
-            print(f"Found RGB LED on pins {pins}")
-        else:  # Single LED
-            led = digitalio.DigitalInOut(getattr(board, pins[0]))
-            led.direction = digitalio.Direction.OUTPUT
-            led.value = False  # Turn it off immediately
-            onboard_leds.append(('single', led))
-            print(f"Found single LED on pin {pins[0]}")
-    except AttributeError:
-        continue
-
-if onboard_leds:
-    print(f"Total LEDs found: {len(onboard_leds)}")
-else:
-    print("Warning: No onboard LEDs detected")
+# Onboard LED completely disabled for professional light painting
+print("Onboard LED disabled for professional operation")
 
 # Button setup with CircuitPython 10 compatibility
 # Button A
@@ -286,9 +249,6 @@ class LEDController:
     
     def display_column(self, column_data):
         """Display column data on LED strip"""
-        # Ensure onboard LEDs are always off during playback
-        self.set_onboard_led_off()
-        
         # Map image pixels to LEDs (distant end = top of image)
         # LED[0] = bottom of image, LED[143] = top of image
         for i, (r, g, b) in enumerate(column_data):
@@ -299,7 +259,6 @@ class LEDController:
     
     def status_flash(self, color, duration=0.1):
         """Flash LED strip with status color"""
-        self.set_onboard_led_off()  # Keep onboard LED off
         pixels.fill(color)
         pixels.show()
         time.sleep(duration)
@@ -308,8 +267,6 @@ class LEDController:
     
     def image_number_indicator(self, image_number, total_images):
         """Show which image is selected by blinking N pixels N times"""
-        self.set_onboard_led_off()  # Keep onboard LED off
-        
         # Limit to max 10 pixels for practical display
         num_pixels = min(image_number, 10)
         num_blinks = min(image_number, 5)  # Max 5 blinks to keep it reasonable
@@ -331,16 +288,6 @@ class LEDController:
             time.sleep(0.15)
         
         time.sleep(0.3)  # Pause before continuing
-    
-    def set_onboard_led_off(self):
-        """Turn off all onboard LEDs"""
-        for led_info in onboard_leds:
-            if led_info[0] == 'rgb':  # RGB LED
-                led_info[1].value = False  # R
-                led_info[2].value = False  # G
-                led_info[3].value = False  # B
-            elif led_info[0] == 'single':  # Single LED
-                led_info[1].value = False
 
 class ButtonHandler:
     def __init__(self):
@@ -403,9 +350,6 @@ def main():
     current_format_info = None
     last_column_time = 0
     using_rainbow = len(image_manager.images) == 0
-    
-    # Turn off onboard LED
-    led_controller.set_onboard_led_off()
     
     # Initial status
     if using_rainbow:
@@ -515,8 +459,6 @@ def main():
                         led_controller.clear()
                         print("Image completed. Press B to restart.")
         
-        # Keep onboard LED off during operation
-        led_controller.set_onboard_led_off()
         time.sleep(0.01)  # Small delay to prevent excessive CPU usage
 
 if __name__ == "__main__":
