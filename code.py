@@ -507,11 +507,13 @@ def main():
                     if playback_mode == "loop":
                         current_column = 0  # Seamless loop
                     else:
-                        # Play once - stop and clear
+                        # Play once - stop and clear, but allow restart
                         is_playing = False
                         current_column = 0
                         image_width = 0
+                        current_format_info = None  # Reset format info to allow restart
                         led_controller.clear()
+                        print("Image completed. Press B to restart.")
         
         # Keep onboard LED off during operation
         led_controller.set_onboard_led_off()
