@@ -11,6 +11,7 @@ import time
 import os
 import struct
 import gc
+import microcontroller
 
 # Configuration
 PLAYBACK_SPEED_MS = 20  # Column display duration in milliseconds (faster playback)
@@ -437,18 +438,29 @@ def main():
         print(f"Loaded {len(image_manager.images)} images, mode: {playback_mode}")
     
     while True:
-        # SMART BUTTON CHECKING: Full check when stopped, reduced frequency when playing
+        # ULTRA-RESPONSIVE STOP BUTTON: Check stop button every loop during playback
         actions = []
         
         if not is_playing:
-            # When stopped: Check buttons every loop for immediate response
+            # When stopped: Check all buttons every loop for immediate response
             actions = button_handler.check_buttons()
         else:
-            # When playing: Check buttons every 10th loop for 90% speed boost
-            button_check_counter += 1
-            if button_check_counter >= 10:
-                actions = button_handler.check_buttons()
-                button_check_counter = 0
+            # When playing: Ultra-responsive stop button + reduced frequency for others
+            # Check STOP button every loop for instant response
+            if button_b and button_handler.last_b and not button_b.value:
+                # Immediate stop on button press
+                is_playing = False
+                led_controller.clear()
+                print("Playback stopped (ultra-responsive)")
+                button_handler.last_b = button_b.value
+            else:
+                # Check all buttons every 10th loop for other functions
+                button_check_counter += 1
+                if button_check_counter >= 10:
+                    actions = button_handler.check_buttons()
+                    button_check_counter = 0
+                # Update button state tracking
+                button_handler.last_b = button_b.value if button_b else True
         
         # Handle button actions
         for action in actions:
