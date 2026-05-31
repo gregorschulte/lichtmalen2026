@@ -135,6 +135,79 @@ class BMPReader:
             return None
     
     @staticmethod
+    def load_full_image(filename, format_info):
+        """Load entire image into memory for maximum speed playback"""
+        if not format_info:
+            return None
+            
+        width = format_info['width']
+        height = format_info['height']
+        is_indexed = format_info['is_indexed']
+        palette = format_info.get('palette')
+        
+        print(f"Loading full image: {width}x{height} pixels...")
+        
+        try:
+            # Create image buffer: [column][led_index] = (r, g, b)
+            image_buffer = []
+            
+            with open(filename, 'rb') as f:
+                if is_indexed and palette:
+                    # 8-bit indexed BMP
+                    data_offset = 54 + 256 * 4
+                    row_size = ((width + 3) // 4) * 4
+                    
+                    # Read all columns
+                    for column in range(width):
+                        column_data = []
+                        for row in range(height):
+                            # Calculate position (bottom-up in BMP)
+                            pixel_row = height - 1 - row  # Flip to top-down
+                            pos = data_offset + pixel_row * row_size + column
+                            f.seek(pos)
+                            
+                            # Read palette index and resolve color
+                            index_data = f.read(1)
+                            if len(index_data) == 1:
+                                palette_index = index_data[0]
+                                if palette_index < len(palette):
+                                    column_data.append(palette[palette_index])
+                                else:
+                                    column_data.append((0, 0, 0))
+                            else:
+                                column_data.append((0, 0, 0))
+                        image_buffer.append(column_data)
+                
+                else:
+                    # 24-bit BMP
+                    row_size = ((width * 3 + 3) // 4) * 4
+                    
+                    # Read all columns
+                    for column in range(width):
+                        column_data = []
+                        for row in range(height):
+                            # Calculate position (bottom-up in BMP)
+                            pixel_row = height - 1 - row  # Flip to top-down
+                            pos = 54 + pixel_row * row_size + column * 3
+                            f.seek(pos)
+                            
+                            # Read BGR values and convert to RGB
+                            bgr = f.read(3)
+                            if len(bgr) == 3:
+                                r, g, b = bgr[2], bgr[1], bgr[0]
+                                column_data.append((r, g, b))
+                            else:
+                                column_data.append((0, 0, 0))
+                        image_buffer.append(column_data)
+            
+            print(f"Image loaded: {len(image_buffer)} columns in memory")
+            return image_buffer
+                
+        except Exception as e:
+            print(f"Error loading full image: {e}")
+            return None
+    
+    @staticmethod
     def read_bmp_column(filename, column, format_info):
         """Read a specific column from BMP file (supports 24-bit and 8-bit indexed)"""
         if not format_info:
@@ -348,6 +421,7 @@ def main():
     current_column = 0
     image_width = 0
     current_format_info = None
+    image_buffer = None  # Full image buffer for maximum speed
     last_column_time = 0
     using_rainbow = len(image_manager.images) == 0
     
@@ -361,83 +435,81 @@ def main():
         print(f"Loaded {len(image_manager.images)} images, mode: {playback_mode}")
     
     while True:
-        # Handle button presses
-        actions = button_handler.check_buttons()
-        
-        for action in actions:
-            if action == 'next_image' and not using_rainbow:
-                next_img = image_manager.next_image()
-                if next_img:
-                    is_playing = False
-                    current_column = 0
-                    image_width = 0
-                    current_format_info = None  # Reset format info for new image
-                    led_controller.clear()
-                    # Show image number indicator: N pixels blink N times
-                    image_num = image_manager.current_image_index + 1  # 1-based for user
-                    led_controller.image_number_indicator(image_num, len(image_manager.images))
-                    print(f"Switched to image {image_num}: {next_img}")
+        # MAXIMUM SPEED OPTIMIZATION: Only check buttons when NOT playing
+        if not is_playing:
+            # Handle button presses
+            actions = button_handler.check_buttons()
             
-            elif action == 'toggle_playback':
-                if is_playing:
-                    # Stop playback
-                    is_playing = False
-                    led_controller.clear()
-                    print("Playback stopped")
-                else:
-                    # Start playback (resume from current position or restart)
-                    is_playing = True
-                    last_column_time = time.monotonic() * 1000
-                    if using_rainbow:
-                        print("Starting rainbow pattern")
+            for action in actions:
+                if action == 'next_image' and not using_rainbow:
+                    next_img = image_manager.next_image()
+                    if next_img:
+                        is_playing = False
+                        current_column = 0
+                        image_width = 0
+                        current_format_info = None
+                        image_buffer = None  # Reset buffer for new image
+                        led_controller.clear()
+                        # Show image number indicator: N pixels blink N times
+                        image_num = image_manager.current_image_index + 1  # 1-based for user
+                        led_controller.image_number_indicator(image_num, len(image_manager.images))
+                        print(f"Switched to image {image_num}: {next_img}")
+                
+                elif action == 'toggle_playback':
+                    if is_playing:
+                        # Stop playback
+                        is_playing = False
+                        led_controller.clear()
+                        print("Playback stopped")
                     else:
-                        print(f"Starting: {image_manager.get_current_image()}")
-            
-            elif action == 'toggle_mode':
-                playback_mode = "once" if playback_mode == "loop" else "loop"
-                color = (0, 255, 0) if playback_mode == "loop" else (255, 0, 0)
-                led_controller.status_flash(color, 0.2)
-                print(f"Mode: {playback_mode}")
+                        # Start playback - load image buffer for maximum speed  
+                        if not using_rainbow:
+                            current_image = image_manager.get_current_image()
+                            if current_image:
+                                # Load format info and full image buffer
+                                current_format_info = BMPReader.read_bmp_header(f"{IMAGES_DIR}/{current_image}")
+                                if current_format_info and current_format_info['height'] == NUM_LEDS:
+                                    image_width = current_format_info['width']
+                                    # Load full image into memory
+                                    image_buffer = BMPReader.load_full_image(f"{IMAGES_DIR}/{current_image}", current_format_info)
+                                    
+                                    if image_buffer:
+                                        print(f"Buffered image: {len(image_buffer)} columns ready for maximum speed")
+                                        is_playing = True
+                                        current_column = 0
+                                        last_column_time = time.monotonic() * 1000
+                                    else:
+                                        print("Error loading image buffer")
+                                else:
+                                    print("Invalid image format")
+                        else:
+                            # Rainbow mode
+                            is_playing = True
+                            current_column = 0
+                            image_width = 100
+                            last_column_time = time.monotonic() * 1000
+                            print("Starting rainbow pattern")
+                
+                elif action == 'toggle_mode':
+                    playback_mode = "once" if playback_mode == "loop" else "loop"
+                    color = (0, 255, 0) if playback_mode == "loop" else (255, 0, 0)
+                    led_controller.status_flash(color, 0.2)
+                    print(f"Mode: {playback_mode}")
         
-        # Handle playback
+        # MAXIMUM SPEED PLAYBACK: Zero overhead during playback
         if is_playing:
             current_time = time.monotonic() * 1000
             if current_time - last_column_time >= PLAYBACK_SPEED_MS:
+                
                 if using_rainbow:
-                    # Rainbow pattern
-                    column_data, width = RainbowGenerator.generate_column(current_column)
-                    image_width = width
+                    # Rainbow pattern (no buffering needed)
+                    column_data, _ = RainbowGenerator.generate_column(current_column)
+                elif image_buffer and current_column < len(image_buffer):
+                    # Use buffered image data - MAXIMUM SPEED!
+                    column_data = image_buffer[current_column]
                 else:
-                    # Load current image info if needed
-                    if current_format_info is None:
-                        current_image = image_manager.get_current_image()
-                        if current_image:
-                            current_format_info = BMPReader.read_bmp_header(f"{IMAGES_DIR}/{current_image}")
-                            if current_format_info and current_format_info['height'] == NUM_LEDS:
-                                image_width = current_format_info['width']
-                                # Print format information
-                                if current_format_info['is_indexed']:
-                                    print(f"8-bit indexed BMP: {image_width}x{current_format_info['height']} (Memory efficient!)")
-                                else:
-                                    print(f"24-bit BMP: {image_width}x{current_format_info['height']}")
-                            else:
-                                if current_format_info:
-                                    print(f"Invalid image dimensions: {current_format_info['width']}x{current_format_info['height']}")
-                                else:
-                                    print("Error reading BMP file")
-                                is_playing = False
-                                continue
-                    
-                    # Read column data
-                    current_image = image_manager.get_current_image()
-                    if current_image and current_column < image_width:
-                        column_data = BMPReader.read_bmp_column(
-                            f"{IMAGES_DIR}/{current_image}", 
-                            current_column, 
-                            current_format_info
-                        )
-                    else:
-                        column_data = [(0, 0, 0)] * NUM_LEDS
+                    # Fallback (should not happen with proper buffering)
+                    column_data = [(0, 0, 0)] * NUM_LEDS
                 
                 # Display column
                 led_controller.display_column(column_data)
@@ -455,11 +527,10 @@ def main():
                         is_playing = False
                         current_column = 0
                         image_width = 0
-                        current_format_info = None  # Reset format info to allow restart
+                        current_format_info = None
+                        image_buffer = None  # Free memory
                         led_controller.clear()
                         print("Image completed. Press B to restart.")
-        
-        # Removed delay for maximum playback speed performance
 
 if __name__ == "__main__":
     main()
